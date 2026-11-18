@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<!--
+  Page d'appel web — Agent vocal Nexura Cloud (Challenge 2, Pol LASILIER, ESIEA)
+  À héberger tel quel sur une page web en HTTPS (GitHub Pages, gratuit) : Google bloque le micro
+  dans les pages Apps Script, l'appel se fait donc ici. Rien à modifier dans ce fichier :
+  toutes les informations (lead, clé publique Vapi, assistant…) arrivent dans l'URL envoyée par Code.gs.
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexura Cloud — Assistant vocal</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px; color: #1d2433; background: #f6f8fc; }
+  h1 { font-size: 24px; }
+  .carte { background: #fff; border: 1px solid #dde3ee; border-radius: 12px; padding: 18px; margin: 14px 0; }
+  button { background: #2f6bff; color: #fff; border: 0; border-radius: 8px; padding: 11px 18px; font-size: 15px; cursor: pointer; }
+  button.stop { background: #d93838; }
+  button:disabled { background: #9aa6bf; cursor: default; }
+  #transcription { background: #fff; border: 1px solid #dde3ee; border-radius: 12px; padding: 12px; height: 260px; overflow: auto; font-size: 14px; }
+  .ia { color: #2f6bff; } .moi { color: #146c3a; } .info { color: #6c7896; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Assistant vocal Nexura Cloud</h1>
+<div class="carte" id="accueil"></div>
+<div class="carte" id="zoneAppel" style="display:none">
+  <p id="etat" class="info"></p>
+  <button id="btnStop" class="stop" disabled>Raccrocher</button>
+  <h3>Transcription en direct</h3>
+  <div id="transcription"></div>
+</div>
+
+<script type="module">
+  import Vapi from "https://esm.sh/@vapi-ai/web";
+
+  const P = Object.fromEntries(new URLSearchParams(location.search));
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  if (!P.lead || !P.k || !P.as) {
+    $("accueil").innerHTML = "<p>Ce lien est incomplet. Utilisez le lien reçu par e-mail ou le bouton « Appeler » de la console.</p>";
+  } else {
+    $("accueil").innerHTML =
+      "<p>Bonjour " + esc(P.p) + ", merci pour votre demande de démo.</p>" +
+      "<p>Notre <b>assistant vocal est une intelligence artificielle</b>. L'échange dure environ 3 minutes " +
+      "et sera résumé pour notre équipe commerciale. Votre navigateur va vous demander l'accès au micro.</p>" +
+      "<button id='btnStart'>Démarrer l'échange vocal</button>";
+    $("btnStart").onclick = demarrer;
+  }
+
+  const vapi = P.k ? new Vapi(P.k) : null;
+
+  async function demarrer() {
+    $("btnStart").disabled = true;
+    $("zoneAppel").style.display = "block";
+    $("etat").textContent = "Connexion à l'assistant… (autorisez le micro si le navigateur le demande)";
+    try {
+      const appel = await vapi.start(P.as, {
+        variableValues: {
+          lead_id: P.lead, first_name: P.p || "", last_name: P.n || "",
+          company_name: P.e || "votre entreprise", company_activity: P.a || "",
+          creneaux_rdv: P.c || "aucun créneau disponible",
+        },
+      });
+      // Relie l'appel au lead dans la Google Sheet (l'agent renvoie aussi le lead_id en secours).
+      if (appel && appel.id && P.w) {
+        fetch(P.w + "?api=lier&lead=" + encodeURIComponent(P.lead) + "&sig=" + encodeURIComponent(P.sig) +
+              "&call=" + encodeURIComponent(appel.id), { mode: "no-cors" });
+      }
+    } catch (err) {
+      $("etat").textContent = "Impossible de démarrer l'appel : " + (err && err.message ? err.message : JSON.stringify(err));
+      $("btnStart").disabled = false;
+    }
+  }
+
+  if (vapi) {
+    vapi.on("call-start", () => { $("etat").textContent = "En ligne avec l'assistant IA."; $("btnStop").disabled = false; });
+    vapi.on("call-end", () => { $("etat").textContent = "Appel terminé. Merci ! Notre équipe revient vers vous très vite."; $("btnStop").disabled = true; });
+    vapi.on("message", m => {
+      if (m.type === "transcript" && m.transcriptType === "final") {
+        const p = document.createElement("p");
+        p.className = m.role === "assistant" ? "ia" : "moi";
+        p.textContent = (m.role === "assistant" ? "Assistant : " : "Vous : ") + m.transcript;
+        $("transcription").appendChild(p);
+        $("transcription").scrollTop = 1e9;
+      }
+    });
+    vapi.on("error", e => { $("etat").textContent = "Erreur : " + (e && e.message ? e.message : JSON.stringify(e)); });
+    $("btnStop").onclick = () => vapi.stop();
+  }
+</script>
+</body>
+</html>
